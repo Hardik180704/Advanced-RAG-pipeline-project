@@ -207,3 +207,157 @@ def _pinecone_class():
         return PineconeVectorStore
     except ImportError as e:
         raise ImportError("VECTOR_DB=pinecone needs the pinecone package, do pip install it.")
+
+def build_index(documents: List[Document]) -> Dict[str, int]:
+    """
+    Build the index from scratch: split documents, embed children, save all.
+
+    Use this the first time, or whenever you want a clean rebuild. Anything
+    that was indexed before is replaced.
+
+    Args:
+        documents: Documents loaded by `src.ingestion`.
+
+    Returns:
+        A small summary dictionary, for example
+        {"documents": 12, "parents": 20, "children": 83}.
+
+    Raises:
+        ValueError: If no documents were given.
+    """
+    if not documents:
+        raise ValueError("No documents to index available. Add files to data/documents first.")
+    
+    parents, children = split_documents(documents)
+
+    clear_index()
+
+    create_vector_store(children)
+    save_doc_store(parents, children)
+
+    return {
+        "documents": len(documents),
+        "parents": len(parents),
+        "children": len(children),
+    }
+
+def update_index(documents: List[Document]) -> Dict[str, int]:
+    """
+    Add new documents to an index that already exists.
+
+    This is what happens when a learner uploads one extra PDF: we only split
+    and embed the new file instead of re-embedding the whole library, which
+    saves both time and OpenAI credits.
+
+    Args:
+        documents: Newly loaded documents to add.
+
+    Returns:
+        A summary dictionary with how many chunks were added and how many were
+        skipped as duplicates.
+    """
+    existing_parents, existing_children = load_doc_store()
+    if not existing_children:
+        return build_index(documents)
+
+    new_parents, new_children = split_documents(documents)
+
+    known_chunk_ids = {doc.metadata["chunk_id"] for doc in existing_children} 
+    known_parent_ids = {doc.metadata["parent_id"] for doc in existing_parents}
+
+    children_to_add = [
+        doc for doc in new_children if doc.metadata["chunk_id"] not in known_chunk_ids
+    ]
+
+    parents_to_add = [
+        doc for doc in new_parents if doc.metadata["parent_id"] not in known_parent_ids
+    ]
+
+    if not children_to_add:
+        return {"added_children": 0, "skipped_children": len(new_children)}
+
+    store = load_vector_store()
+
+    if config.VECTOR_DB == "pinecone":
+        store.add_documents(children_to_add, namespace=config.PINECONE_NAMESPACE)
+    else:
+        store.add_documents(children_to_add)
+        store.save_local(str(config.FAISS_DIR))
+
+    save_doc_store(
+        existing_parents + parents_to_add,
+        existing_children + children_to_add
+    )
+
+    return {
+        "added_children": len(children_to_add),
+        "skipped_children": len(new_children) - len(children_to_add),
+    }
+
+def clear_index() -> None:
+    """
+    Delete everything we have indexed so the next build starts clean.
+
+    Useful when you change the embedding model, change the chunk sizes, or
+    simply want to start over with a different set of documents.
+    """
+    if config.FAISS_DIR.exists():
+        shutil.rmtree(config.FAISS_DIR)
+
+    if config.DOC_STORE_PATH.exists():
+        config.DOC_STORE_PATH.unlink()
+
+    if config.VECTOR_DB == "pinecone":
+        _clear_pinecone_namespace()
+
+    logger.info("index cleared.")
+
+def _clear_pinecone_namespace() -> None:
+    """
+    Remove all vectors from the configured Pinecone namespace.
+
+    FAISS is cleared by deleting a folder, but Pinecone lives in the cloud, so
+    we ask Pinecone to delete the vectors instead.
+    """
+    try:
+        from pinecone import Pinecone
+
+        pinecone = Pinecone(api_key = config.PINECONE_API_KEY)
+        index = pinecone.Index(config.PINECONE_INDEX_NAME)
+        index.delete(delete_all=True)
+    except Exception as e:
+        logger.warning("Could not clear Pinecone namespace: %s", e)
+
+def index_exists() -> bool:
+    """
+    Check whether there is an index ready to answer questions.
+
+    The Streamlit app uses this to decide between showing the chat box and
+    showing "please build the index first".
+
+    Returns:
+        True if chunks have been indexed, False otherwise.
+    """
+    if not config.DOC_STORE_PATH.exists():
+        return False
+
+    if config.VECTOR_DB == "faiss":
+        return (config.FAISS_DIR/"index.faiss").exists()
+
+    return True
+
+def index_summary() -> Dict[str, object]:
+    """
+    Describe what is currently in the index, for display in the sidebar.
+
+    Returns:
+        A dictionary with chunk counts and the list of indexed filenames.
+    """
+    parents, children = load_doc_store()
+    filenames = sorted({doc.metadata.get("filename", "?") for doc in parents})
+
+    return {
+        "parents": len(parents),
+        "children": len(children),
+        "files": filenames,
+    }
