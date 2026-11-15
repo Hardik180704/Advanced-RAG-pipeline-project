@@ -1,26 +1,36 @@
 # Advanced RAG Pipeline
 
-A production-grade Retrieval-Augmented Generation (RAG) system with multi-format document ingestion, hierarchical parent-child chunking, hybrid retrieval, and flexible vector store support (FAISS & Pinecone).
-
-## Overview
-
-This project implements an advanced RAG architecture designed to address common pitfalls in standard document QA systems:
-- **Lost Context**: Small chunks give precise embeddings but lack enough surrounding context for the LLM to generate high-quality answers.
-- **Diluted Retrieval**: Large chunks provide rich context but lower semantic search precision when embedded.
-- **Parent-Child Solution**: We embed small child chunks for high-precision retrieval while passing their linked parent chunks to the LLM for rich, accurate context generation.
+A production-grade Retrieval-Augmented Generation (RAG) system with multi-format document ingestion, hierarchical parent-child chunking, multi-query expansion, hybrid dense/sparse retrieval with Reciprocal Rank Fusion (RRF), and flexible vector store support (FAISS & Pinecone).
 
 ---
 
-### Key Features
+## Overview
+
+Standard RAG architectures often suffer from a fundamental trade-off:
+- **Lost Context**: Small chunks produce sharp embeddings for search, but lack sufficient surrounding context for the LLM to generate nuanced, accurate answers.
+- **Diluted Retrieval**: Large chunks contain rich context, but their embeddings average out specific details, reducing search precision.
+
+### The Parent-Child & Hybrid Solution
+This project solves these challenges by combining:
+1. **Hierarchical Parent-Child Chunking**: Small child chunks are embedded and searched for high-precision retrieval, but their linked parent chunks are recovered and supplied to the LLM for rich generation context.
+2. **Hybrid Search (Dense + Sparse)**: Combines semantic vector similarity (FAISS/Pinecone) with exact keyword matching (BM25) to catch both conceptual meanings and technical identifiers (e.g., policy names, error codes).
+3. **Multi-Query Rewriting**: LLM-driven query rewriting generates multiple search variants and contextualizes conversational follow-ups.
+4. **Reciprocal Rank Fusion (RRF)**: Merges multiple ranked lists from various queries and search methods into a single, high-confidence candidate ranking.
+
+---
+
+## Key Features
+
 - **Multi-Format Ingestion**: Supports `.pdf`, `.docx`, and `.txt` documents with text cleaning, metadata enrichment (filename, page numbers), and automatic section heading detection.
-- **Hierarchical Parent-Child Chunking**: Automatically splits documents into large parent chunks (e.g., 1600 characters) and smaller child chunks (e.g., 400 characters) linked via unique identifiers.
+- **Hierarchical Parent-Child Chunking**: Splits documents into large parent chunks (e.g., 1600 characters) and smaller child chunks (e.g., 400 characters) linked via deterministic parent IDs.
 - **Dual Vector Store Support**:
   - **FAISS (Default)**: Runs locally with zero account setup and stores indices in `vectorstore/faiss/`.
   - **Pinecone**: Cloud vector database support for managed, distributed index storage.
-- **Configurable LLM & Embeddings**: Seamless integration with OpenAI models (`gpt-4o-mini`, `text-embedding-3-small`, etc.) via LangChain.
-- **Document Store Persistence**: Serializes chunk structures and parent-child lookup mappings to `vectorstore/doc_store.json` for fast reloads and incremental updates without re-processing files.
-- **Incremental Indexing**: Add new documents without re-embedding existing files, avoiding duplicate embeddings and saving API credits.
-- **Synthetic Data Generator**: Includes a built-in generator script for synthetic company documentation (policies, handbooks, guides) in multiple file formats.
+- **Hybrid Retrieval (Vector + BM25)**: Evaluates semantic meaning via embeddings alongside exact term matches via BM25 keyword search.
+- **Reciprocal Rank Fusion (RRF)**: Fuses candidate lists using rank reciprocal scoring ($1 / (60 + \text{rank})$) to surface chunks agreed upon by multiple queries.
+- **Document Store Persistence**: Serializes chunk structures and parent-child lookup mappings to `vectorstore/doc_store.json` for instant reloads without re-reading source files.
+- **Incremental Indexing**: Add new documents without re-embedding the whole document library, avoiding duplicate embeddings and saving API credits.
+- **CLI & Synthetic Data Generator**: Built-in scripts to generate synthetic company documentation and build/rebuild indices directly from the terminal.
 
 ---
 
@@ -28,21 +38,28 @@ This project implements an advanced RAG architecture designed to address common 
 
 ```
 .
-├── config.py                  # Central configuration & environment variables
-├── llm_client.py              # Cached OpenAI LLM and embedding client initializers
-├── main.py                    # Application entry point
-├── requirements.txt           # Project dependencies
-├── pyproject.toml             # Project metadata and configuration
-├── .env.example               # Example environment variables template
+├── config.py                        # Central configuration & environment variables
+├── llm_client.py                    # Cached OpenAI LLM and embedding client initializers
+├── main.py                          # Application entry point
+├── projectflow.txt                  # Recommended build sequence & milestone roadmap
+├── requirements.txt                 # Project dependencies
+├── pyproject.toml                   # Project metadata and configuration
+├── .env.example                     # Example environment variables template
 ├── data/
-│   └── documents/             # Raw sample documents (PDF, DOCX, TXT)
+│   └── documents/                   # Raw sample documents (PDF, DOCX, TXT)
 ├── scripts/
-│   └── generate_sample_documents.py  # Synthetic document generation utility
+│   ├── build_index.py               # CLI tool to build the vector index from scratch
+│   └── generate_sample_documents.py # Synthetic company document generator
 └── src/
     ├── __init__.py
-    ├── ingestion.py           # Document loaders, cleaning, metadata & section detection
-    ├── chunking.py            # Recursive parent-child splitting and lookup map builder
-    └── indexing.py            # Vector store indexing, persistence & lifecycle pipelines
+    ├── ingestion.py                 # Document loaders, cleaning, metadata & section detection
+    ├── chunking.py                  # Parent-child splitting and lookup map builder
+    ├── indexing.py                  # Vector store indexing, persistence & lifecycle pipelines
+    ├── retrieval.py                 # Multi-query rewriting, BM25, vector search, RRF & hybrid retrieval
+    ├── reranking.py                 # Cross-encoder & similarity reranking
+    ├── refinement.py                # Context filtering & compression
+    ├── memory.py                    # Conversation history management
+    └── rag_pipeline.py              # End-to-end RAG orchestrator
 ```
 
 ---
@@ -96,37 +113,69 @@ cp .env.example .env
 
 ### 1. Generate Sample Documents (Optional)
 
-The repository comes with pre-generated sample documents in `data/documents/`. You can regenerate them at any time:
+The repository comes with pre-generated synthetic company documents in `data/documents/`. You can regenerate them at any time:
 
 ```bash
 python scripts/generate_sample_documents.py
 ```
 
-### 2. Ingest and Build the Index
+### 2. Build the Index (CLI)
 
-You can build or inspect the vector index directly using the Python modules:
+Build the vector index and document store from scratch using the CLI script:
+
+```bash
+python scripts/build_index.py
+```
+
+Output:
+```text
+Reading documents from: .../data/documents
+Index built successfully.
+    Pages / documents loaded : 12
+    Parent Chunks(Context)   : 20
+    Child Chunks(searched)   : 83
+    Vector database          : faiss
+```
+
+### 3. Hybrid Retrieval & Parent Recovery (Python)
+
+Run queries through the hybrid multi-query retrieval pipeline:
 
 ```python
 import config
-from src.ingestion import load_documents_from_folder
-from src.indexing import build_index, index_summary, index_exists
+from src.chunking import build_parent_lookup
+from src.indexing import load_doc_store, load_vector_store
+from src.retrieval import (
+    build_keyword_retriever,
+    generate_query_variants,
+    hybrid_retrieve,
+    recover_parent,
+)
 
-# Load all documents from the data directory
-documents = load_documents_from_folder(config.DOCUMENTS_DIR)
-print(f"Loaded {len(documents)} document pages/sections.")
+# 1. Load stored vector index and chunks
+store = load_vector_store()
+parents, children = load_doc_store()
+parent_lookup = build_parent_lookup(parents)
+bm25 = build_keyword_retriever(children)
 
-# Build parent-child index (creates vectorstore/doc_store.json and vector index)
-summary = build_index(documents)
-print("Index build results:", summary)
+# 2. Multi-query rewriting (generates variants for better coverage)
+question = "What is the annual leave policy?"
+queries = generate_query_variants(question)
 
-# Inspect current index contents
-print("Index ready:", index_exists())
-print("Summary:", index_summary())
+# 3. Hybrid retrieval (Vector + BM25 combined via Reciprocal Rank Fusion)
+candidate_children = hybrid_retrieve(queries, store, bm25)
+
+# 4. Recover rich parent context for LLM generation
+retrieved_parents = recover_parent(candidate_children, parent_lookup)
+
+for idx, doc in enumerate(retrieved_parents, 1):
+    print(f"\n[Parent Document {idx} - Section: {doc.metadata.get('section', 'General')}]")
+    print(doc.page_content[:200] + "...")
 ```
 
-### 3. Incremental Index Updates
+### 4. Incremental Index Updates
 
-When new documents are added, update the index without re-embedding existing files:
+Add new documents without re-embedding existing files:
 
 ```python
 from src.ingestion import load_document
