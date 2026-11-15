@@ -58,8 +58,29 @@ def generate_query_variants(question: str, history: str = "") -> List[str]:
              "How do refunds work?",
              "money-back guarantee terms"]
     """
-    pass
+    queries = [question]
 
+    try:
+        chain = MULTI_QUERY_PROMPT | get_chat_model | StrOutputParser
+        response = chain.invoke(
+            {
+                "question": question,
+                "history": history or "(None)",
+                "num_variants": config.NUM_QUERY_VARIENTS,
+            }
+        )
+
+        for line in response.split("\n"):
+            cleaned =  line.strip(" -*0123456789.*").strip()
+
+            if cleaned and cleaned.lower() != question.lower():
+                queries.append(cleaned)
+
+    except Exception as e:
+        logger.warning("Multi query generation failed (%s). Using original query only.", e)
+
+    return queries[:config.NUM_QUERY_VARIENTS + 1]
+        
 def build_keyword_retriever(children: List[Document]) -> BM25Retriever:
     """
     Build a BM25 keyword retriever over the child chunks.
@@ -74,7 +95,9 @@ def build_keyword_retriever(children: List[Document]) -> BM25Retriever:
     Returns:
         A BM25Retriever ready to answer queries.
     """
-    pass 
+    retriever = BM25Retriever.from_documents(children)
+    retriever.k = config.BM25_TOP_K 
+    return retriever
 
 def search_vector_store(store: VectorStore, query: str, k: int) -> List[Document]:
     """
@@ -89,7 +112,11 @@ def search_vector_store(store: VectorStore, query: str, k: int) -> List[Document
         Up to `k` child chunks, most similar first. Returns an empty list if
         the search fails, so one bad query cannot break the whole pipeline.
     """
-    pass
+    try:
+        return store.similarity_search(query, k=k)
+    except Exception as e:
+        logger.warning("Vector search failed for '%s':%s ", query, e)
+        return []
 
 def search_keywords(retriever: BM25Retriever, query: str) -> List[Document]:
     """
@@ -102,9 +129,13 @@ def search_keywords(retriever: BM25Retriever, query: str) -> List[Document]:
     Returns:
         The best keyword matches, most relevant first.
     """
-    pass
+    try:
+        return retriever.invoke(query)
+    except Exception as e:
+        logger.warning("Keyword search failed for '%s':%s ", query, e)
+        return []
 
-def fuse_results(ranked_list: List[List[Document]], top_k: int) -> List[Document]:
+def fuse_results(ranked_lists: List[List[Document]], top_k: int) -> List[Document]:
     """
     Merge several result lists into one, using Reciprocal Rank Fusion (RRF).
 
@@ -127,7 +158,19 @@ def fuse_results(ranked_list: List[List[Document]], top_k: int) -> List[Document
             1/(60+0) = 0.0167
         So chunk A wins.
     """
-    pass
+    rrf_constant = 60
+
+    scores = Dict[str, float] = {}
+    documents: Dict[str, Document] = {}
+
+    for ranked_list in ranked_lists:
+        for position, document in enumerate(ranked_list):
+            chunk_id = document.metadata.get("chunk_id", document.page_content[:80])
+            scores[chunk_id] = scores.get(chunk_id, 0.0) + 1.0 / (rrf_constant + position)
+            documents[chunk_id] = document
+
+    best_id = sorted(scores, key = lambda key: scores[key], reverse=True)[:top_k]
+    return [documents[chunk_id] for chunk_id in best_id]
 
 def hybrid_retrieve(
     queries: List[str],
@@ -148,9 +191,15 @@ def hybrid_retrieve(
     Returns:
         The fused list of candidate child chunks (at most HYBRID_TOP_K).
     """
-    pass
+    ranked_lists: List[List[Document]] = []
 
-def recover_parent(
+    for query in queries:
+        ranked_lists.append(search_vector_store(store, query, config.VECTOR_TOP_K))
+        ranked_lists.append(search_keywords(keyword_retriever,query))
+
+    return fuse_results(ranked_lists, config.HYBRID_TOP_K)
+
+def record_parent(
     children: List[Document],
     parent_lookup: Dict[str, Document],
 ) -> List[Document]:
@@ -170,7 +219,22 @@ def recover_parent(
         children from the same parent collapse into a single parent, which
         also stops us from sending the same text to the LLM twice.
     """
-    pass
+    parents: List[Document] = []
+    seen_parent_ids = set()
+
+    for child in children:
+        parent_id = child.metadata.get("parent_id")
+        parent = parent_lookup.get(parent_id)
+
+        if parent is None:
+            parent.append(child)
+            continue
+
+        if parent_id not in seen_parent_ids:
+            seen_parent_ids.add(parent_id)
+            parents.append(parent)
+
+    return parents
 
 
 
