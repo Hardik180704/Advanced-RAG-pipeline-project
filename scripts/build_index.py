@@ -14,9 +14,9 @@ def main() -> None:
     """
     Load the documents folder, split it and build the index from scratch.
 
-    Prints a short summary so you can see how many chunks were created. Any
-    failure (missing API key, empty folder) is reported as a readable message
-    rather than a stack trace.
+    Prints a short summary so you can see how many chunks were created.
+    Failures exit non-zero so CI pipelines (which build the index before
+    docker) never continue with a missing index.
     """
     print(f"Reading documents from: {config.DOCUMENTS_DIR}")
 
@@ -24,13 +24,13 @@ def main() -> None:
 
     if not documents:
         print("No readable documents found. Add PDF, TXT, DOCX files and try again.")
-        return
+        sys.exit(1)
 
     try:
         stats = build_index(documents)
     except Exception as e:
         print(f"Build failed: {e}")
-        return
+        sys.exit(1)
 
     print("\nIndex built successfully.")
     print(f"    Pages / documents loaded : {stats['documents']}")

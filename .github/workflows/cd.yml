@@ -37,6 +37,15 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
+      # Hard guard: the image COPYs vectorstore/, so a silent index-build
+      # failure must stop the pipeline here, not surface as a buildx error.
+      - name: Verify index artifacts exist
+        run: |
+          test -f vectorstore/doc_store.json || {
+            echo "::error::vectorstore/doc_store.json missing - index build failed"
+            exit 1
+          }
+
       - name: Resolve lowercase image name and tag
         run: |
           echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
