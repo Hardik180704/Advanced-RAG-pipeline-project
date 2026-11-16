@@ -20,7 +20,7 @@ spec:
       containers:
         - name: api
           # Patched by cd.yml to the freshly pushed tag
-          image: ghcr.io/hardik180704/advanced-rag-pipeline-project:latest
+          image: ghcr.io/hardik180704/memora:latest
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8000

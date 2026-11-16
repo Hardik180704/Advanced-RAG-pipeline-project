@@ -113,8 +113,8 @@ Memora attacks all four at once.
 ### 2. Environment
 
 ```bash
-git clone https://github.com/Hardik180704/Advanced-RAG-pipeline-project.git
-cd Advanced-RAG-pipeline-project
+git clone https://github.com/Hardik180704/memora.git
+cd memora
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 

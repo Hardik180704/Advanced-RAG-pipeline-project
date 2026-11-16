@@ -9,7 +9,7 @@ select = ["E4", "E7", "E9", "F"]
 "src/memory.py" = ["E402"]
 
 [project]
-name = "advanced-rag-project"
+name = "memora"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
