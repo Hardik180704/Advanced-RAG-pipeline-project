@@ -1,0 +1,131 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --color-canvas: #0a0a0f;
+  --color-panel: #111118;
+
+  --animate-rise: rise 0.4s cubic-bezier(0.21, 1.02, 0.73, 1) both;
+  --animate-fade: fade 0.5s ease both;
+  --animate-caret: caret 1s steps(2) infinite;
+
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @keyframes fade {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes caret {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0;
+    }
+  }
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background-color: var(--color-canvas);
+  color: #e6e6ee;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Aurora wash — soft pastel glows framing the workspace */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(640px 340px at 10% -6%, rgba(165, 180, 252, 0.11), transparent 62%),
+    radial-gradient(760px 380px at 92% 110%, rgba(240, 171, 252, 0.08), transparent 62%),
+    radial-gradient(520px 420px at 60% 45%, rgba(165, 243, 252, 0.045), transparent 65%);
+}
+
+/* --- pastel colors --- */
+/* Light sweep across the brand badge */
+@keyframes sheen {
+  0% {
+    transform: translateX(-170%) skewX(-14deg);
+  }
+  55%,
+  100% {
+    transform: translateX(170%) skewX(-14deg);
+  }
+}
+
+.logo-sheen {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+.logo-sheen::after {
+  content: "";
+  position: absolute;
+  top: -25%;
+  bottom: -25%;
+  width: 42%;
+  background: linear-gradient(
+    100deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.4) 50%,
+    transparent 100%
+  );
+  transform: translateX(-170%) skewX(-14deg);
+  animation: sheen 5.5s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+/* Shared brand gradient — pastel indigo to fuchsia */
+.brand-gradient {
+  background-image: linear-gradient(135deg, #c7d2fe 0%, #ddd6fe 45%, #f5d0fe 100%);
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.07);
+  border-radius: 8px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::selection {
+  background: rgba(199, 210, 254, 0.32);
+}
+
+.text-balance {
+  text-wrap: balance;
+}

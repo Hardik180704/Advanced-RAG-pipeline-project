@@ -1,0 +1,28 @@
+# frontend build artifacts
+frontend/node_modules
+frontend/dist
+
+# python artifacts
+__pycache__
+*.pyc
+.venv
+.pytest_cache
+.ruff_cache
+
+# runtime data not baked into the image
+# vectorstore NOT excluded: the built FAISS index + doc_store.json are baked
+# in at build time (scripts/build_index.py runs before docker build), so the
+# deployed pod can answer immediately (VECTOR_DB=faiss + single replica).
+data
+*.env
+.env
+.env.*
+!.env.example
+
+# repo housekeeping
+.git
+.github
+k8s
+*.md
+.DS_Store
+.DS_Store?
