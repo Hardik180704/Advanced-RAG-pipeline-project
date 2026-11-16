@@ -80,21 +80,28 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: image
-    # Needs a KUBECONFIG repo secret (base64 kubeconfig for the target cluster).
+    # Skipped unless a KUBECONFIG repo secret exists (base64 kubeconfig for
+    # the target cluster). Until then only the image is published, and CD
+    # ends green - configure the cluster, add the secret, and deploys start
+    # without any workflow change.
+    if: ${{ secrets.KUBECONFIG != '' }}
     environment: production
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up kubectl
+        if: ${{ secrets.KUBECONFIG != '' }}
         uses: azure/setup-kubectl@v4
 
       - name: Configure cluster access
+        if: ${{ secrets.KUBECONFIG != '' }}
         run: |
           mkdir -p ~/.kube
           echo "${{ secrets.KUBECONFIG }}" | base64 --decode > ~/.kube/config
           chmod 600 ~/.kube/config
 
       - name: Apply manifests (secret excluded, managed by hand)
+        if: ${{ secrets.KUBECONFIG != '' }}
         run: |
           kubectl apply -f k8s/namespace.yaml
           kubectl apply -f k8s/configmap.yaml
@@ -104,6 +111,7 @@ jobs:
           kubectl apply -f k8s/hpa.yaml
 
       - name: Ensure GHCR pull secret
+        if: ${{ secrets.KUBECONFIG != '' }}
         run: |
           kubectl -n rag create secret docker-registry ghcr-pull \
             --docker-server=ghcr.io \
@@ -112,6 +120,7 @@ jobs:
             --dry-run=server -o yaml | kubectl apply -f -
 
       - name: Roll out the new image
+        if: ${{ secrets.KUBECONFIG != '' }}
         run: |
           kubectl -n rag set image deployment/rag-api \
             api=${{ needs.image.outputs.image }}:${{ needs.image.outputs.tag }}
