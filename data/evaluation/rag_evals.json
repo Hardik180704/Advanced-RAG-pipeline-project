@@ -1,0 +1,45 @@
+{
+  "description": "Memora RAG evaluation set. Grounded in data/documents content: 9 answerable questions + 1 unanswerable probe.",
+  "cases": [
+    {
+      "question": "Within how many days can customers on monthly self-service plans request a full refund?",
+      "reference": "30 days from the original purchase date."
+    },
+    {
+      "question": "How much does Business Support cost per month and what does it add?",
+      "reference": "Business Support costs 199 USD per month. It adds live chat, a four hour first-response target and up to five named support contacts."
+    },
+    {
+      "question": "What does Enterprise Support include for critical Priority 1 issues?",
+      "reference": "24/7 phone support, a dedicated Technical Account Manager, a one hour first-response target and quarterly architecture reviews. Critical tickets can be raised anytime including weekends and holidays."
+    },
+    {
+      "question": "What is a Priority 2 issue and how fast is the first response on Business Support?",
+      "reference": "Priority 2 means a major feature is unusable but a workaround exists. First response is eight hours for Business Support."
+    },
+    {
+      "question": "What is the annual learning budget and what approval is needed for big purchases?",
+      "reference": "Each employee has an annual learning budget of 1500 USD. It does not carry over. Purchases above 500 USD need manager approval in advance."
+    },
+    {
+      "question": "What are the core hours employees must be available for?",
+      "reference": "Employees work flexible hours but must be available during the core hours of 10:00 to 16:00."
+    },
+    {
+      "question": "When is an expense claim paid out?",
+      "reference": "Approved expenses are reimbursed with the next monthly payroll run if submitted before the 25th of the month. Claims submitted later roll to the following month."
+    },
+    {
+      "question": "How do refunds for annual self-service subscriptions work?",
+      "reference": "Annual self-service subscriptions can be refunded pro-rata for the unused whole months remaining, minus a 10 percent administrative fee."
+    },
+    {
+      "question": "Where are TechNova's offices and how many people does it employ?",
+      "reference": "TechNova employs 240 people across three offices: Austin (Americas), Dublin (Europe) and Singapore (Asia Pacific). It was founded in 2016 in Austin, Texas."
+    },
+    {
+      "question": "What is TechNova's maximum annual cloud infrastructure spend?",
+      "reference": "The indexed documents do not mention any cloud infrastructure spend, so this cannot be answered from them."
+    }
+  ]
+}

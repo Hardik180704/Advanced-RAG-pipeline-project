@@ -1,0 +1,109 @@
+name: CD
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  image:
+    name: Build & push image
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    outputs:
+      image: ${{ env.IMAGE }}
+      tag: ${{ env.TAG }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # The FAISS index is baked into the image (single-replica, faiss mode):
+      # build_index.py must run BEFORE docker build or the deployed pod
+      # starts with an empty store and every question 503s.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build the vector index
+        run: |
+          pip install -q --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.txt
+          python scripts/build_index.py
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+      - name: Resolve lowercase image name and tag
+        run: |
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "TAG=${GITHUB_REF#refs/tags/}" >> "$GITHUB_ENV"
+          else
+            echo "TAG=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ env.TAG }}
+            ${{ env.IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to Kubernetes
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: image
+    # Needs a KUBECONFIG repo secret (base64 kubeconfig for the target cluster).
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Configure cluster access
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG }}" | base64 --decode > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Apply manifests (secret excluded, managed by hand)
+        run: |
+          kubectl apply -f k8s/namespace.yaml
+          kubectl apply -f k8s/configmap.yaml
+          kubectl apply -f k8s/deployment.yaml
+          kubectl apply -f k8s/service.yaml
+          kubectl apply -f k8s/ingress.yaml
+          kubectl apply -f k8s/hpa.yaml
+
+      - name: Ensure GHCR pull secret
+        run: |
+          kubectl -n rag create secret docker-registry ghcr-pull \
+            --docker-server=ghcr.io \
+            --docker-username=${{ github.actor }} \
+            --docker-password=${{ secrets.GITHUB_TOKEN }} \
+            --dry-run=server -o yaml | kubectl apply -f -
+
+      - name: Roll out the new image
+        run: |
+          kubectl -n rag set image deployment/rag-api \
+            api=${{ needs.image.outputs.image }}:${{ needs.image.outputs.tag }}
+          kubectl -n rag rollout status deployment/rag-api --timeout=300s

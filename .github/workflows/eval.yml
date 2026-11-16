@@ -1,0 +1,42 @@
+name: RAG Evaluation
+
+on:
+  # Manual runs only: evaluations cost LLM tokens per question and are too
+  # unstable to gate merges on. Run from the Actions tab when wanted.
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Run only the first N QA cases (empty = all)"
+        required: false
+        default: ""
+
+jobs:
+  evaluate:
+    name: Evaluate RAG pipeline
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.txt
+
+      # The index is not in git (gitignored) - build it fresh, then evaluate
+      - name: Build the index
+        run: python scripts/build_index.py
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+      - name: Run evaluation against LangSmith
+        run: |
+          ARGS=""
+          if [ -n "${{ inputs.limit }}" ]; then ARGS="--limit ${{ inputs.limit }}"; fi
+          python scripts/evaluate.py $ARGS
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
+          LANGSMITH_PROJECT: ${{ secrets.LANGSMITH_PROJECT }}

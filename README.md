@@ -1,193 +1,268 @@
-# Advanced RAG Pipeline
+# Memora — Advanced RAG Pipeline
 
-A production-grade Retrieval-Augmented Generation (RAG) system with multi-format document ingestion, hierarchical parent-child chunking, multi-query expansion, hybrid dense/sparse retrieval with Reciprocal Rank Fusion (RRF), and flexible vector store support (FAISS & Pinecone).
+A production-grade Retrieval-Augmented Generation system with multi-format document ingestion, hierarchical parent-child chunking, multi-query rewriting, hybrid dense/sparse retrieval with Reciprocal Rank Fusion, cross-encoder reranking, and cited, streamed answers through a custom React console — packaged as a single Docker image, delivered by a GitHub Actions CI/CD pipeline, and evaluated end to end with LangSmith.
 
----
-
-## Overview
-
-Standard RAG architectures often suffer from a fundamental trade-off:
-- **Lost Context**: Small chunks produce sharp embeddings for search, but lack sufficient surrounding context for the LLM to generate nuanced, accurate answers.
-- **Diluted Retrieval**: Large chunks contain rich context, but their embeddings average out specific details, reducing search precision.
-
-### The Parent-Child & Hybrid Solution
-This project solves these challenges by combining:
-1. **Hierarchical Parent-Child Chunking**: Small child chunks are embedded and searched for high-precision retrieval, but their linked parent chunks are recovered and supplied to the LLM for rich generation context.
-2. **Hybrid Search (Dense + Sparse)**: Combines semantic vector similarity (FAISS/Pinecone) with exact keyword matching (BM25) to catch both conceptual meanings and technical identifiers (e.g., policy names, error codes).
-3. **Multi-Query Rewriting**: LLM-driven query rewriting generates multiple search variants and contextualizes conversational follow-ups.
-4. **Reciprocal Rank Fusion (RRF)**: Merges multiple ranked lists from various queries and search methods into a single, high-confidence candidate ranking.
+<p align="center">
+  <img src="docs/screenshots/ui-answer.png" alt="Memora answering a question with citations" width="720" />
+</p>
 
 ---
 
-## Key Features
+## Why: the RAG quality problem
 
-- **Multi-Format Ingestion**: Supports `.pdf`, `.docx`, and `.txt` documents with text cleaning, metadata enrichment (filename, page numbers), and automatic section heading detection.
-- **Hierarchical Parent-Child Chunking**: Splits documents into large parent chunks (e.g., 1600 characters) and smaller child chunks (e.g., 400 characters) linked via deterministic parent IDs.
-- **Dual Vector Store Support**:
-  - **FAISS (Default)**: Runs locally with zero account setup and stores indices in `vectorstore/faiss/`.
-  - **Pinecone**: Cloud vector database support for managed, distributed index storage.
-- **Hybrid Retrieval (Vector + BM25)**: Evaluates semantic meaning via embeddings alongside exact term matches via BM25 keyword search.
-- **Reciprocal Rank Fusion (RRF)**: Fuses candidate lists using rank reciprocal scoring ($1 / (60 + \text{rank})$) to surface chunks agreed upon by multiple queries.
-- **Document Store Persistence**: Serializes chunk structures and parent-child lookup mappings to `vectorstore/doc_store.json` for instant reloads without re-reading source files.
-- **Incremental Indexing**: Add new documents without re-embedding the whole document library, avoiding duplicate embeddings and saving API credits.
-- **CLI & Synthetic Data Generator**: Built-in scripts to generate synthetic company documentation and build/rebuild indices directly from the terminal.
+Standard RAG architectures suffer from a fundamental trade-off:
+
+- **Lost context** — small chunks produce sharp embeddings for search, but lack the surrounding context the LLM needs for nuanced answers.
+- **Diluted retrieval** — large chunks carry rich context, but their embeddings average out specifics, hurting search precision.
+- **Vocabulary mismatch** — users say "time off" while the document says "annual leave"; single-query semantic search misses exact identifiers like "TN-SUP-2024".
+- **Unverified answers** — retrieval always returns *something*, and without scoring, filtering and citations, the LLM happily invents around weak context.
+
+Memora attacks all four at once.
+
+## Architecture
+
+```
+ Ingestion                Indexing                 Query time
+┌──────────────┐   ┌──────────────────────┐   ┌──────────────────────────────────────────┐
+│ PDF/DOCX/TXT │   │ parent 1600c /       │   │ question ─► multi-query rewrite (LLM)    │
+│ load → clean │──►│ child 400c chunks    │──►│   ├─► FAISS dense search (per query)     │
+│ metadata +   │   │ FAISS or Pinecone    │   │   ├─► BM25 sparse search (per query)     │
+│ section heads│   │ doc_store.json       │   │   └─► RRF fusion (1/(60+rank))           │
+└──────────────┘   └──────────────────────┘   │        ─► recover parent chunks          │
+                                              │        ─► cross-encoder rerank + filter  │
+                                              │        ─► context budget (MAX_CONTEXT)   │
+                                              │        ─► gpt-4o-mini, streamed, cited   │
+                                              └──────────────────────────────────────────┘
+```
+
+### Pipeline stages in depth
+
+1. **Multi-format ingestion** (`src/ingestion.py`) — PDF, DOCX and TXT loaders; text cleaning (dehyphenation, whitespace normalization); metadata enrichment (filename, page numbers, doc type); section-heading detection so citations can read *"Section: Password Policy"*.
+2. **Hierarchical parent-child chunking** (`src/chunking.py`) — documents split into large parent chunks (1600 chars) for LLM context and small child chunks (400 chars) for search precision, linked by deterministic `parent_id`s. Search hits children; generation reads parents. Deterministic IDs make incremental indexing idempotent.
+3. **Dual vector store** (`src/indexing.py`) — FAISS locally (zero account setup, index persisted in `vectorstore/faiss/`) or Pinecone in the cloud. The whole store can be rebuilt from scratch or updated **incrementally** — new files are chunked and embedded without re-embedding the library; identical chunks are skipped by `chunk_id` (saves API spend). For containerized single-replica deploys the FAISS index is **baked into the image at build time**.
+4. **Multi-query rewriting** (`src/retrieval.py`) — an LLM expands the question into N paraphrases and resolves conversational references ("does *it* apply…?" → "does the refund policy apply…?"), using the session history. The original question is always kept, so the pipeline degrades gracefully if the rewrite call fails.
+5. **Hybrid retrieval** — every query runs through *both* FAISS (semantic) and BM25 (exact term matching — model codes, policy names, "SOC 2"), catching meaning *and* identifiers.
+6. **Reciprocal Rank Fusion** — result lists are merged with RRF: each document scores `1 / (60 + rank)` per list it appears in, summed. Chunks multiple searches agree on rise to the top; duplicates collapse.
+7. **Parent recovery** — matched child chunks are replaced by their parents (deduplicated), so the LLM always reads full context, never orphan fragments.
+8. **Cross-encoder reranking** (`src/reranking.py`) — `ms-marco-MiniLM-L-6-v2` scores every (query, parent) pair jointly (meaning-aware, unlike embeddings); a graceful keyword-overlap fallback keeps the pipeline alive if the model can't load. Each score lands in `rerank_score` metadata.
+9. **Context refinement** (`src/refinement.py`) — drops chunks below `MIN_RERANK_SCORE` (retrieval always returns *something*; weak chunks invite hallucination), enforces a character budget (`MAX_CONTEXT_CHARS`), and formats numbered, source-labelled blocks — the numbering the model cites.
+10. **Answer generation with memory** (`src/rag_pipeline.py`, `src/memory.py`) — a strict system prompt (context-only answers, cite `[1]`-style sources, admit when the docs don't cover it), a sliding conversation window (`MEMORY_WINDOW`) for natural follow-ups, and full streaming token-by-token over SSE.
+
+### The UI (React + Vite + Tailwind)
+
+- Token-by-token **SSE streaming** with a live caret and stop button
+- **Citation chips** — every `[n]` in an answer links to the actual chunk it came from (hover to preview)
+- **Debug trace drawer** — per answer: generated queries, retrieved (RRF-fused), reranked, and final context, each with rerank scores
+- **Document library** — upload PDF/DOCX/TXT from the sidebar; ingestion runs incrementally with per-file success/failure feedback; a two-step-confirmed *Reset library* wipes the index (source files kept)
+- Per-answer stats (`Answered from 3 chunks · 4 queries · 2.4s`), markdown rendering (lists, code, bold), copy-to-clipboard, smart autoscroll, pastel light theme with an animated brand mark
+
+<p align="center">
+  <img src="docs/screenshots/ui-home.png" alt="Memora UI" width="720" />
+</p>
 
 ---
 
-## Project Structure
+## Project structure
 
 ```
 .
-├── config.py                        # Central configuration & environment variables
-├── llm_client.py                    # Cached OpenAI LLM and embedding client initializers
-├── main.py                          # Application entry point
-├── projectflow.txt                  # Recommended build sequence & milestone roadmap
-├── requirements.txt                 # Project dependencies
-├── pyproject.toml                   # Project metadata and configuration
-├── .env.example                     # Example environment variables template
-├── data/
-│   └── documents/                   # Raw sample documents (PDF, DOCX, TXT)
+├── app/                        # API layer (thin — no RAG logic here)
+│   ├── main.py                 # FastAPI app, CORS, static UI mount
+│   ├── api/routes.py           # /ask (JSON), /ask/stream (SSE), /documents, /history
+│   ├── api/schemas.py          # Pydantic request/response models
+│   ├── state.py                # lazy pipeline cache + per-session memory
+│   ├── stages.py               # shared orchestration (JSON + SSE paths)
+│   └── tests/                  # pytest suite for the API
+├── src/                        # RAG core — pure Python, framework-agnostic
+│   ├── ingestion.py            # loaders, cleaning, metadata, sections
+│   ├── chunking.py             # parent/child splitting, lookup maps
+│   ├── indexing.py             # FAISS/Pinecone, incremental updates, doc store
+│   ├── retrieval.py            # query rewriting, hybrid search, RRF, parents
+│   ├── reranking.py            # cross-encoder + keyword fallback
+│   ├── refinement.py           # threshold filter, budget, prompt formatting
+│   ├── memory.py               # sliding-window chat history
+│   └── rag_pipeline.py         # end-to-end orchestrator
+├── frontend/                   # React + Vite + TypeScript + Tailwind
+│   └── src/components/         # ChatWindow, ChatMessage, Sidebar, DebugDrawer…
 ├── scripts/
-│   ├── build_index.py               # CLI tool to build the vector index from scratch
-│   └── generate_sample_documents.py # Synthetic company document generator
-└── src/
-    ├── __init__.py
-    ├── ingestion.py                 # Document loaders, cleaning, metadata & section detection
-    ├── chunking.py                  # Parent-child splitting and lookup map builder
-    ├── indexing.py                  # Vector store indexing, persistence & lifecycle pipelines
-    ├── retrieval.py                 # Multi-query rewriting, BM25, vector search, RRF & hybrid retrieval
-    ├── reranking.py                 # Cross-encoder & similarity reranking
-    ├── refinement.py                # Context filtering & compression
-    ├── memory.py                    # Conversation history management
-    └── rag_pipeline.py              # End-to-end RAG orchestrator
+│   ├── build_index.py          # CLI index build
+│   ├── generate_sample_documents.py
+│   └── evaluate.py             # LangSmith evaluation runner (offline + online)
+├── data/
+│   ├── documents/              # sample TechNova corpus (gitignored uploads)
+│   └── evaluation/rag_evals.json  # 10 gold QA cases incl. unanswerable probe
+├── k8s/                        # namespace, deployment, service, ingress,
+│                               # configmap, secret template, HPA
+├── .github/workflows/
+│   ├── ci.yml                  # PRs: lint → tests → frontend build → docker build
+│   ├── cd.yml                  # main: index → GHCR push → kubectl deploy
+│   └── eval.yml                # manual dispatch: full LangSmith evaluation
+├── Dockerfile                  # multi-stage: node build → python serve
+├── docs/screenshots/           # deployment + evaluation proof
+└── config.py                   # single source of configuration
 ```
 
 ---
 
-## Getting Started
+## Getting started (local, no cluster)
 
 ### 1. Prerequisites
-- Python 3.12+
-- (Optional) [uv](https://docs.astral.sh/uv/) for fast virtual environment management
+- Python 3.12+, Node 20+, Docker (for the container path)
+- An OpenAI API key
 
-### 2. Environment Setup
-
-Clone the repository and set up a virtual environment:
+### 2. Environment
 
 ```bash
 git clone https://github.com/Hardik180704/Advanced-RAG-pipeline-project.git
 cd Advanced-RAG-pipeline-project
-
-python -m venv .venv
-source .venv/bin/activate
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+
+cp .env.example .env   # then set OPENAI_API_KEY
 ```
 
-### 3. Configuration
+Key settings (all in `.env`): `VECTOR_DB=faiss|pinecone`, `RERANKER=cross-encoder|simple`, chunk sizes, retrieval top-k, `MIN_RERANK_SCORE`, context budget, memory window, LangSmith keys.
 
-Copy the example environment file and configure your API keys:
-
-```bash
-cp .env.example .env
-```
-
-#### Choose your Vector Database:
-
-- **Local FAISS (Recommended for learning & local dev)**:
-  ```env
-  OPENAI_API_KEY=your_openai_api_key
-  VECTOR_DB=faiss
-  ```
-- **Remote Pinecone**:
-  ```env
-  OPENAI_API_KEY=your_openai_api_key
-  VECTOR_DB=pinecone
-  PINECONE_API_KEY=your_pinecone_api_key
-  PINECONE_INDEX_NAME=advanced-rag
-  PINECONE_NAMESPACE=default
-  ```
-
----
-
-## Usage
-
-### 1. Generate Sample Documents (Optional)
-
-The repository comes with pre-generated synthetic company documents in `data/documents/`. You can regenerate them at any time:
-
-```bash
-python scripts/generate_sample_documents.py
-```
-
-### 2. Build the Index (CLI)
-
-Build the vector index and document store from scratch using the CLI script:
+### 3. Build the index
 
 ```bash
 python scripts/build_index.py
 ```
 
-Output:
-```text
-Reading documents from: .../data/documents
-Index built successfully.
-    Pages / documents loaded : 12
-    Parent Chunks(Context)   : 20
-    Child Chunks(searched)   : 83
-    Vector database          : faiss
+### 4. Run
+
+```bash
+# single server (API + built UI on :8000)
+uvicorn app.main:app --port 8000
+
+# or dev mode with hot reload
+uvicorn app.main:app --reload          # terminal 1
+npm run dev --prefix frontend          # terminal 2 → :5173 (proxies /api)
 ```
 
-### 3. Hybrid Retrieval & Parent Recovery (Python)
+Open **http://localhost:8000**, upload your own PDF/DOCX/TXT from the sidebar, and ask.
 
-Run queries through the hybrid multi-query retrieval pipeline:
+Tests and lint (what CI runs):
 
-```python
-import config
-from src.chunking import build_parent_lookup
-from src.indexing import load_doc_store, load_vector_store
-from src.retrieval import (
-    build_keyword_retriever,
-    generate_query_variants,
-    hybrid_retrieve,
-    recover_parent,
-)
-
-# 1. Load stored vector index and chunks
-store = load_vector_store()
-parents, children = load_doc_store()
-parent_lookup = build_parent_lookup(parents)
-bm25 = build_keyword_retriever(children)
-
-# 2. Multi-query rewriting (generates variants for better coverage)
-question = "What is the annual leave policy?"
-queries = generate_query_variants(question)
-
-# 3. Hybrid retrieval (Vector + BM25 combined via Reciprocal Rank Fusion)
-candidate_children = hybrid_retrieve(queries, store, bm25)
-
-# 4. Recover rich parent context for LLM generation
-retrieved_parents = recover_parent(candidate_children, parent_lookup)
-
-for idx, doc in enumerate(retrieved_parents, 1):
-    print(f"\n[Parent Document {idx} - Section: {doc.metadata.get('section', 'General')}]")
-    print(doc.page_content[:200] + "...")
+```bash
+pytest app/tests -q
+ruff check src app scripts config.py llm_client.py
 ```
 
-### 4. Incremental Index Updates
+---
 
-Add new documents without re-embedding existing files:
+## Evaluation (LangSmith)
 
-```python
-from src.ingestion import load_document
-from src.indexing import update_index
+Two modes from one runner, `scripts/evaluate.py`:
 
-# Load newly added document
-new_docs = load_document("data/documents/new_policy.pdf")
+| Command | What it does | Cost |
+| --- | --- | --- |
+| `python scripts/evaluate.py --offline` | runs the real pipeline over all 10 cases, prints answers | tokens for answers only |
+| `python scripts/evaluate.py` | syncs the gold set to LangSmith, runs the pipeline, scores with two LLM judges, publishes an experiment | + judge calls |
+| `python scripts/evaluate.py --limit 3` | first N cases only | cheaper |
+| Actions tab → *RAG Evaluation* | the same, on GitHub runners | manual dispatch only |
 
-# Incrementally update index (skips already indexed chunks)
-result = update_index(new_docs)
-print(f"Added {result['added_children']} new chunks, skipped {result['skipped_children']} duplicates.")
+### The gold dataset
+
+`data/evaluation/rag_evals.json` holds 10 QA cases **grounded in the actual sample corpus** (refund windows, support-plan pricing, priority response targets, learning budget, expense cut-offs, office facts) plus one deliberate **unanswerable probe** ("maximum annual cloud infrastructure spend?") whose reference answer is a refusal — a hallucination tripwire that scores whether the pipeline admits gaps instead of inventing.
+
+### The judges
+
+- **`correctness`** (reference-based) — grades the produced answer against the gold reference: 0 wrong / 1 partial / 2 correct. Equivalent honest refusals pass when the reference itself declines.
+- **`groundedness`** (reference-free) — grades the answer **only against the full text of the chunks that reached the prompt** (not truncated previews): 2 all claims supported / 1 minor unsupported details / 0 invented facts.
+
+The pair is diagnostic: `groundedness=2, correctness=0` → faithful answer to the wrong retrieval; `correctness=2, groundedness=0` → right answer with unsupported claims.
+
+### Running results
+
+Latest offline run — 9/10 answerable cases correct with citations; the unanswerable probe correctly declined:
+
+<p align="center">
+  <img src="docs/screenshots/offline-eval.png" alt="Offline evaluation output" width="720" />
+</p>
+
+Online runs publish every experiment to LangSmith with full traces (question → query rewriting → retrieval → answer → judge verdicts):
+
+<p align="center">
+  <img src="docs/screenshots/langsmith-eval.png" alt="LangSmith evaluation project" width="720" />
+</p>
+
+**Reading the scores:** occasional 1s are signal, not noise. The regression alarm is three consecutive 0s on answerable cases — that's the failure mode this pipeline exists to catch after prompt, model, or retrieval changes.
+
+A **corpus guard** refuses to evaluate when the index doesn't contain the TechNova corpus (scores would be meaningless), overridable with `--force`.
+
+---
+
+## CI/CD and Kubernetes
+
+### Pipeline
+
+| Workflow | Trigger | Jobs |
+| --- | --- | --- |
+| **CI** (`ci.yml`) | every PR to `main` | ruff → pytest → frontend typecheck+build → docker build (no push, GHA cache) |
+| **CD** (`cd.yml`) | every push to `main` / `v*` tags | build vector index → build & push image to GHCR (`:sha`, `:latest`) → `kubectl apply` manifests → `set image` → `rollout status` (5 min gate) |
+| **Eval** (`eval.yml`) | manual dispatch only | full LangSmith evaluation (manual because LLM evals cost tokens and are too unstable to gate merges) |
+
+### Image design
+
+Single **multi-stage Dockerfile**: `node:20-alpine` builds the React app → `python:3.12-slim` installs CPU-only torch (`--extra-index-url …/whl/cpu` avoids the ~2 GB CUDA pull) and serves API + static UI on one port, as a non-root user with a healthcheck. The FAISS index is baked in at build time (`cd.yml` runs `build_index.py` before the docker build), so a deployed pod answers immediately — the right trade-off for single-replica FAISS mode; multi-replica deployments switch `VECTOR_DB=pinecone` in the configmap.
+
+### Kubernetes manifests (`k8s/`)
+
+- **namespace** (`rag`), **configmap** (all pipeline settings), **secret** (template only — created imperatively so keys never hit git)
+- **deployment** — readiness/liveness probes on `/api/health`, resource requests/limits, GHCR `imagePullSecrets`
+- **service** (ClusterIP :80) + **ingress** (nginx class, SSE-tuned: buffering off, 300s read timeout)
+- **hpa** — 1→5 replicas at 75% CPU
+
+### Verified on minikube
+
+Deployed to a local Kubernetes cluster and verified end to end — pod healthy, probes green, and the full retrieval → rerank → answer chain executing inside the cluster:
+
+| Pod, service and ingress | Cited answer generated inside the cluster |
+| --- | --- |
+| ![Pod, service and ingress in minikube](docs/screenshots/k8s-resources.png) | ![Cited answer in chat](docs/screenshots/ui-answer.png) |
+
+Reproduce locally:
+
+```bash
+minikube start --driver=docker --cpus=2 --memory=4096 --disk-size=20g
+minikube addons enable ingress
+docker build -t memora:local . && minikube image load memora:local
+
+kubectl apply -f k8s/namespace.yaml
+kubectl -n rag create secret generic rag-secrets \
+  --from-literal=OPENAI_API_KEY=sk-your-real-key
+kubectl apply -f k8s/configmap.yaml -f k8s/deployment.yaml \
+  -f k8s/service.yaml -f k8s/ingress.yaml -f k8s/hpa.yaml
+
+kubectl -n rag set image deployment/rag-api api=memora:local
+kubectl -n rag rollout status deployment/rag-api --timeout=300s
+kubectl -n rag port-forward svc/rag-api 8000:80   # → http://localhost:8000
 ```
+
+For the full remote story (Actions deploying to a real cluster), set two repo
+secrets — `KUBECONFIG` (base64 kubeconfig of a cluster reachable from GitHub
+runners, e.g. kind on an EC2 spot instance) and `OPENAI_API_KEY` — then every
+push to `main` ships automatically. One known trade-off is documented in the
+README history: FAISS mode is single-replica; scale-out switches to Pinecone
+via the configmap.
+
+---
+
+## API reference
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` | `/api/ask` | full pipeline in one JSON response (answer, sources, debug) |
+| `POST` | `/api/ask/stream` | SSE stream: `status` → `sources` → `token`… → `done` |
+| `GET` | `/api/documents` | index summary (parents, chunks, files) |
+| `POST` | `/api/documents` | multipart upload, incremental ingestion |
+| `DELETE` | `/api/documents?confirm=true` | wipe the index (guarded, source files kept) |
+| `GET` | `/api/status` | live pipeline settings (model, vector store, reranker) |
+| `GET/DELETE` | `/api/history` | clear one session's conversation |
+| `GET` | `/api/health` | liveness probe |
+
+Interactive docs at `/api/docs` (Swagger) when the server runs.
 
 ---
 
