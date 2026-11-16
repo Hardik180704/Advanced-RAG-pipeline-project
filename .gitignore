@@ -12,8 +12,22 @@ wheels/
 # environment variables
 .env
 
+# everything uploaded to data/documents stays local (personal files);
+# only the checked-in TechNova samples are versioned
+data/documents/*
+!data/documents/technova_*
+
 # Vector store & local index artifacts
 vectorstore/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+app/static/
+
+# pytest / tooling caches
+.pytest_cache/
+.ruff_cache/
 
 # OS files
 .DS_Store

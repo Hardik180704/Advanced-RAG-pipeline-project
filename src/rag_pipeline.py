@@ -16,12 +16,12 @@ from src.retrieval import (
     build_keyword_retriever,
     generate_query_variants,
     hybrid_retrieve,
-    recover_parent
+    recover_parents,
 )
 
 logger = logging.getLogger(__name__)
 
-ANSWER_PROMPT = ChatPromptTemplate.from_template(
+ANSWER_PROMPT = ChatPromptTemplate.from_messages(
     [
         (
             "system",
@@ -93,7 +93,7 @@ def answer_question(
     Raises:
         ValueError: If the question is empty.
     """
-    if not question or not qustion.strip():
+    if not question or not question.strip():
         raise ValueError("Please type a question first")
 
     history_text = format_history(memory)

@@ -1,4 +1,10 @@
 import os
+
+# faiss and sentence-transformers/torch each bundle their own OpenMP runtime.
+# Loading both in one process aborts with OMP Error #15 on macOS unless one
+# copy is allowed to win. Harmless for this app; set before heavy imports.
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
 from pathlib import Path
 from dotenv import load_dotenv
 

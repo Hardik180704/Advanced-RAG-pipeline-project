@@ -205,7 +205,7 @@ def _pinecone_class():
     try:
         from langchain_community.vectorstores import PineconeVectorStore
         return PineconeVectorStore
-    except ImportError as e:
+    except ImportError:
         raise ImportError("VECTOR_DB=pinecone needs the pinecone package, do pip install it.")
 
 def build_index(documents: List[Document]) -> Dict[str, int]:

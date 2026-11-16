@@ -61,7 +61,7 @@ def generate_query_variants(question: str, history: str = "") -> List[str]:
     queries = [question]
 
     try:
-        chain = MULTI_QUERY_PROMPT | get_chat_model | StrOutputParser
+        chain = MULTI_QUERY_PROMPT | get_chat_model() | StrOutputParser()
         response = chain.invoke(
             {
                 "question": question,
@@ -160,7 +160,7 @@ def fuse_results(ranked_lists: List[List[Document]], top_k: int) -> List[Documen
     """
     rrf_constant = 60
 
-    scores = Dict[str, float] = {}
+    scores: Dict[str, float] = {}
     documents: Dict[str, Document] = {}
 
     for ranked_list in ranked_lists:
@@ -227,7 +227,7 @@ def recover_parents(
         parent = parent_lookup.get(parent_id)
 
         if parent is None:
-            parent.append(child)
+            parents.append(child)
             continue
 
         if parent_id not in seen_parent_ids:
