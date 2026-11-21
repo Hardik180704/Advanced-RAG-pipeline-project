@@ -3,6 +3,30 @@
 A production-grade Retrieval-Augmented Generation system with multi-format document ingestion, hierarchical parent-child chunking, multi-query rewriting, hybrid dense/sparse retrieval with Reciprocal Rank Fusion, cross-encoder reranking, and cited, streamed answers through a custom React console — packaged as a single Docker image, delivered by a GitHub Actions CI/CD pipeline, and evaluated end to end with LangSmith.
 
 <p align="center">
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python_3.12-3776AB?logo=python&logoColor=white" alt="Python"></a>
+  <a href="https://fastapi.tiangolo.com/"><img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI"></a>
+  <a href="https://react.dev/"><img src="https://img.shields.io/badge/React_19-61DAFB?logo=react&logoColor=black" alt="React"></a>
+  <a href="https://vite.dev/"><img src="https://img.shields.io/badge/Vite-646CFF?logo=vite&logoColor=white" alt="Vite"></a>
+  <a href="https://tailwindcss.com/"><img src="https://img.shields.io/badge/Tailwind-06B6D4?logo=tailwindcss&logoColor=white" alt="Tailwind CSS"></a>
+  <a href="https://www.langchain.com/"><img src="https://img.shields.io/badge/LangChain-1C3C3C?logo=langchain&logoColor=white" alt="LangChain"></a>
+  <a href="https://openai.com/"><img src="https://img.shields.io/badge/OpenAI-412991?logo=openai&logoColor=white" alt="OpenAI"></a>
+  <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white" alt="TypeScript"></a>
+  <a href="https://huggingface.co/cross-encoder/ms-marco-MiniLM-L-6-v2"><img src="https://img.shields.io/badge/Cross--Encoder-FFD21E?logo=huggingface&logoColor=black" alt="Cross-Encoder"></a>
+</p>
+<p align="center">
+  <a href="https://www.docker.com/"><img src="https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white" alt="Docker"></a>
+  <a href="https://kubernetes.io/"><img src="https://img.shields.io/badge/Kubernetes-326CE5?logo=kubernetes&logoColor=white" alt="Kubernetes"></a>
+  <a href="https://minikube.sigs.k8s.io/"><img src="https://img.shields.io/badge/minikube-FD4C39?logo=kubernetes&logoColor=white" alt="minikube"></a>
+  <a href="https://nginx.org/"><img src="https://img.shields.io/badge/NGINX_Ingress-009639?logo=nginx&logoColor=white" alt="NGINX Ingress"></a>
+  <a href="https://github.com/features/actions"><img src="https://img.shields.io/badge/GitHub_Actions-2088FF?logo=githubactions&logoColor=white" alt="GitHub Actions"></a>
+  <a href="https://github.com/features/actions"><img src="https://img.shields.io/badge/GHCR-181717?logo=github&logoColor=white" alt="GitHub Container Registry"></a>
+  <a href="https://smith.langchain.com/"><img src="https://img.shields.io/badge/LangSmith-1C3C3C?logo=langchain&logoColor=white" alt="LangSmith"></a>
+  <a href="https://faiss.ai/"><img src="https://img.shields.io/badge/FAISS-blue?&logoColor=white&color=4B8BBE" alt="FAISS"></a>
+  <a href="https://www.pinecone.io/"><img src="https://img.shields.io/badge/Pinecone-111111?logo=pinecone&logoColor=white" alt="Pinecone"></a>
+  <a href="https://pytest.org/"><img src="https://img.shields.io/badge/pytest-0A9EDC?logo=pytest&logoColor=white" alt="pytest"></a>
+</p>
+
+<p align="center">
   <img src="docs/screenshots/ui-answer.png" alt="Memora answering a question with citations" width="720" />
 </p>
 
